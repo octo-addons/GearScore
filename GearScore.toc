@@ -1,8 +1,8 @@
 ## Interface: 11200
 ## Title: GearScore
-## Notes: Syncs gear to TurtleLootLine and displays upgrade recommendations
+## Notes: Syncs your OctoWoW gear to TurtleLootLine and displays upgrade recommendations
 ## Author: Ronni
-## Version: 1.2.0
+## Version: 1.2.1
 ## SavedVariables: GearScoreLootDB
 ## SavedVariablesPerCharacter: GearScoreData, GearScoreSettings, GearScoreInventory
 

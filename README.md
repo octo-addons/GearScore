@@ -1,6 +1,6 @@
 # GearScore - TurtleLootLine WoW Addon
 
-A Turtle WoW addon that syncs character gear data and displays upgrade recommendations from TurtleLootLine.
+An OctoWoW addon that syncs character gear data and displays upgrade recommendations from TurtleLootLine.
 
 ## Features
 
@@ -13,8 +13,8 @@ A Turtle WoW addon that syncs character gear data and displays upgrade recommend
 ## Installation
 
 1. Copy the `gearscore` folder to your WoW AddOns directory:
-   - Windows: `C:\Games\Turtle WoW\Interface\AddOns\`
-   - macOS: `~/Applications/Turtle WoW/Interface/AddOns/`
+   - The client folder OctoLauncher installed, then `Interface\AddOns\` (Windows) or `Interface/AddOns/` (macOS)
+   - Example on Windows: `C:\Games\OctoWoW\Interface\AddOns\`
 
 2. Rename the folder to `GearScore` (or keep as `gearscore`)
 
@@ -87,7 +87,7 @@ The addon saves data in this format:
 GearScoreData = {
     lastUpdated = 1703001234,
     character = "Paleedk",
-    realm = "Turtle WoW",
+    realm = "OctoWoW",
     class = "Paladin",
     equipment = {
         [1] = {
@@ -141,13 +141,13 @@ GearScoreUpgrades = {
 
 ## Requirements
 
-- Turtle WoW (1.12 client)
+- OctoWoW (1.12 client via OctoLauncher)
 - TurtleLootLine Desktop Companion app
 - TurtleLootLine account with sync token
 
 ## Version
 
-- Current version: 1.0.0
+- Current version: 1.2.1
 - Compatible with Interface: 11200 (WoW 1.12)
 
 ## Author
