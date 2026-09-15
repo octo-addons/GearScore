@@ -91,12 +91,30 @@ local function ScanEquipment()
             end
 
             if itemId then
-                equipment[slotId] = {
+                local entry = {
                     slot = SLOT_NAMES[slotId],
                     itemId = itemId,
                     itemName = itemName or ("Item #" .. itemId),
                     itemLink = itemLink
                 }
+
+                -- Enchant ID is the second field of the link: item:id:enchant:suffix:unique
+                local _, _, enchantIdStr = string.find(itemLink, "item:%d+:(%d+)")
+                local enchantId = tonumber(enchantIdStr)
+                if enchantId and enchantId > 0 then
+                    entry.enchantId = enchantId
+                    -- Reading the tooltip must never block the save, so guard it
+                    if GearScore_GetEquippedEnchantText then
+                        local ok, text = pcall(GearScore_GetEquippedEnchantText, slotId)
+                        if ok then
+                            entry.enchantText = text
+                        else
+                            PrintError("Enchant text read failed for slot " .. slotId .. ": " .. tostring(text))
+                        end
+                    end
+                end
+
+                equipment[slotId] = entry
             end
         end
     end
@@ -109,10 +127,17 @@ end
 -- ============================================================================
 
 -- Scan current talent build and return a signature + tree data
+-- Returns nil if talent data isn't loaded yet (no tabs, or every maxRank is 0)
 local function ScanTalents()
+    local numTabs = GetNumTalentTabs()
+    if not numTabs or numTabs == 0 then
+        return nil
+    end
+
     local trees = {}
     local summary = {}
-    for tab = 1, GetNumTalentTabs() do
+    local totalMaxRank = 0
+    for tab = 1, numTabs do
         local tabName = GetTalentTabInfo(tab)
         local points = 0
         local talents = {}
@@ -120,12 +145,48 @@ local function ScanTalents()
             local name, iconTexture, tier, column, rank, maxRank = GetTalentInfo(tab, i)
             talents[i] = { name = name, rank = rank, maxRank = maxRank }
             points = points + (rank or 0)
+            totalMaxRank = totalMaxRank + (maxRank or 0)
         end
         trees[tab] = { name = tabName, points = points, talents = talents }
         table.insert(summary, tostring(points))
     end
+
+    if totalMaxRank == 0 then
+        return nil
+    end
+
     local signature = table.concat(summary, "/")  -- e.g. "21/30/0"
     return signature, trees
+end
+
+-- A stored build is valid if it has a signature and at least one talent with maxRank > 0
+local function IsValidTalentBuild(sig, build)
+    if not sig or sig == "" or not build or not build.trees then
+        return false
+    end
+    for _, tree in pairs(build.trees) do
+        if tree.talents then
+            for _, talent in pairs(tree.talents) do
+                if talent.maxRank and talent.maxRank > 0 then
+                    return true
+                end
+            end
+        end
+    end
+    return false
+end
+
+-- Drop builds saved before talent data had loaded (e.g. "" or all-zero maxRank)
+local function PruneTalentBuilds(builds)
+    local cleaned = {}
+    if builds then
+        for sig, build in pairs(builds) do
+            if IsValidTalentBuild(sig, build) then
+                cleaned[sig] = build
+            end
+        end
+    end
+    return cleaned
 end
 
 -- ============================================================================
@@ -139,8 +200,27 @@ local SAVE_THROTTLE = 2  -- Only save once per 2 seconds
 -- Cache talent builds across saves (SaveData overwrites GearScoreData entirely)
 local cachedTalentBuilds = {}
 
+-- Set while logging out / reloading: game data is already unloaded, so never save then
+local isLeavingWorld = false
+
+-- Delayed rescan when level/talents weren't ready yet
+local RESCAN_DELAY = 5      -- seconds
+local MAX_RESCANS = 6
+local rescanTimer = nil     -- seconds until next rescan, nil = none scheduled
+local rescanCount = 0
+
+local function ScheduleRescan()
+    if rescanCount < MAX_RESCANS and not rescanTimer then
+        rescanTimer = RESCAN_DELAY
+    end
+end
+
 -- Save current gear data to SavedVariables
 local function SaveData(forceDebug)
+    if isLeavingWorld then
+        return
+    end
+
     -- Throttle to prevent excessive saves
     local currentTime = time()
     if currentTime - lastSaveTime < SAVE_THROTTLE then
@@ -151,12 +231,26 @@ local function SaveData(forceDebug)
     end
     lastSaveTime = currentTime
 
-    -- Preserve existing talent builds before overwriting
-    if GearScoreData and GearScoreData.talents and GearScoreData.talents.builds then
-        cachedTalentBuilds = GearScoreData.talents.builds
+    local previous = GearScoreData or {}
+
+    -- Preserve existing talent builds before overwriting (dropping any broken ones)
+    if previous.talents and previous.talents.builds then
+        cachedTalentBuilds = PruneTalentBuilds(previous.talents.builds)
     end
 
     local equipment = ScanEquipment()
+    local needsRescan = false
+
+    -- Level can read 0 before the player is fully loaded; keep the last good value
+    local level = UnitLevel("player")
+    if not level or level <= 0 then
+        if previous.level and previous.level > 0 then
+            level = previous.level
+        else
+            level = nil
+        end
+        needsRescan = true
+    end
 
     GearScoreData = {
         lastUpdated = time(),
@@ -164,7 +258,7 @@ local function SaveData(forceDebug)
         realm = GetRealmName(),
         class = UnitClass("player"),
         race = UnitRace("player"),
-        level = UnitLevel("player"),
+        level = level,
         guild = GetGuildInfo("player"),
         equipment = equipment
     }
@@ -172,12 +266,24 @@ local function SaveData(forceDebug)
     -- Add talent data if enabled
     if not GearScoreSettings or GearScoreSettings.talentsEnabled ~= false then
         local sig, trees = ScanTalents()
-        cachedTalentBuilds[sig] = {
-            timestamp = time(),
-            trees = trees
-        }
+        local active
+
+        if sig then
+            cachedTalentBuilds[sig] = {
+                timestamp = time(),
+                trees = trees
+            }
+            active = sig
+        else
+            -- Talent data not loaded yet: keep the last known active build
+            if previous.talents and IsValidTalentBuild(previous.talents.active, cachedTalentBuilds[previous.talents.active]) then
+                active = previous.talents.active
+            end
+            needsRescan = true
+        end
+
         GearScoreData.talents = {
-            active = sig,
+            active = active,
             builds = cachedTalentBuilds
         }
 
@@ -186,8 +292,12 @@ local function SaveData(forceDebug)
             for _ in pairs(cachedTalentBuilds) do
                 buildCount = buildCount + 1
             end
-            PrintDebug(string.format("Active talents: %s (%d build(s) stored)", sig, buildCount))
+            PrintDebug(string.format("Active talents: %s (%d build(s) stored)", tostring(active), buildCount))
         end
+    end
+
+    if needsRescan then
+        ScheduleRescan()
     end
 
     -- Debug: count equipped items
@@ -257,9 +367,15 @@ end
 local function OnEvent()
     if event == "PLAYER_ENTERING_WORLD" then
         -- Player logged in or entered world
+        isLeavingWorld = false
+        rescanCount = 0
+
         -- Force a save immediately on login (bypass throttle)
         lastSaveTime = 0  -- Reset throttle
         SaveData(true)     -- Enable debug output
+
+        -- Gear, level and talents may not be loaded yet; scan again shortly
+        ScheduleRescan()
 
         -- Show upgrade count if available
         local upgradeCount = 0
@@ -287,13 +403,27 @@ local function OnEvent()
         end
 
     elseif event == "PLAYER_LEAVING_WORLD" then
-        -- About to logout/reload — ensure latest data is saved
-        lastSaveTime = 0
-        SaveData()
+        -- About to logout/reload. Equipment, level and talents are already unloaded
+        -- here, so saving now would wipe good data. GearScoreData already holds the
+        -- last good scan and WoW writes it to disk on its own.
+        isLeavingWorld = true
+        rescanTimer = nil
     end
 end
 
 frame:SetScript("OnEvent", OnEvent)
+
+-- Delayed rescan timer (Vanilla 1.12: arg1 = elapsed seconds)
+frame:SetScript("OnUpdate", function()
+    if not rescanTimer then return end
+    rescanTimer = rescanTimer - arg1
+    if rescanTimer > 0 then return end
+
+    rescanTimer = nil
+    rescanCount = rescanCount + 1
+    lastSaveTime = 0  -- bypass throttle
+    SaveData()
+end)
 
 -- Register events (Vanilla 1.12 compatible)
 frame:RegisterEvent("PLAYER_ENTERING_WORLD")

@@ -130,6 +130,53 @@ local function GetTooltipLineRight(lineNum)
     return nil
 end
 
+-- ============================================================================
+-- ENCHANT TEXT
+-- ============================================================================
+
+-- Green tooltip lines that are NOT enchants
+local NON_ENCHANT_PREFIXES = { "Equip:", "Use:", "Chance on hit:", "Set:", "(" }
+
+local function IsGreen(fontString)
+    if not fontString or not fontString.GetTextColor then return false end
+    local r, g, b = fontString:GetTextColor()
+    return g and g > 0.9 and r and r < 0.3 and b and b < 0.3
+end
+
+-- Read the enchant line (e.g. "+8 Stamina") from an equipped item's tooltip.
+-- Enchants show as a plain green line; equip/use effects and set bonuses are
+-- also green but carry a known prefix, so those are skipped.
+-- Returns nil if the slot has no enchant text.
+function GearScore_GetEquippedEnchantText(slotId)
+    local tooltip = GetScanTooltip()
+    tooltip:SetOwner(UIParent, "ANCHOR_NONE")
+    tooltip:ClearLines()
+    tooltip:SetInventoryItem("player", slotId)
+
+    for i = 2, 30 do
+        local fontString = getglobal("GearScoreScanTooltipTextLeft" .. i)
+        if not fontString then break end
+        local text = fontString:GetText()
+        if not text then break end
+
+        if IsGreen(fontString) then
+            local isEffect = false
+            for p = 1, table.getn(NON_ENCHANT_PREFIXES) do
+                local prefix = NON_ENCHANT_PREFIXES[p]
+                if string.sub(text, 1, string.len(prefix)) == prefix then
+                    isEffect = true
+                    break
+                end
+            end
+            if not isEffect then
+                return text
+            end
+        end
+    end
+
+    return nil
+end
+
 -- Parse a single tooltip line for stats
 local function ParseLine(line, result)
     if not line or line == "" then return end
